@@ -1,0 +1,24 @@
+# Build artifacts and object files
+build/
+*.o
+*.d
+*.map
+*.elf
+*.bin.bak
+*.hex.bak
+
+# Ableton Live analysis files
+*.asd
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS generated files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Optional local backups / other module folders
+plaits/
+stages_stock/
