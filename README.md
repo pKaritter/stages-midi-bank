@@ -32,6 +32,20 @@ This firmware transforms one or two modules into a **24-channel MIDI controller*
 
 ---
 
+## Hardware Compatibility: Behringer Steps vs. Original MI Stages
+
+> [!IMPORTANT]
+> **Behringer Steps vs. Original Mutable Instruments Stages Rear Jacks:**
+> - **Behringer Steps:** Features **physical 3.5mm TRS jacks** on the rear PCB (`Link IN` and `Link OUT`). It is **100% plug-and-play** using standard 3.5mm audio patch cables and 3.5mm TRS-to-MIDI cables.
+> - **Original MI Stages:** Uses **3-pin pin headers** (ribbon cable connectors) instead of 3.5mm jacks. To get MIDI output from an original Stages, you need a simple **3-pin header to 3.5mm TRS female jack (or 5-pin DIN) adapter cable**:
+>   - **Pin 1:** Ground (Sleeve)
+>   - **Pin 2:** USART TX Data (Ring)
+>   - **Pin 3:** +3.3V Power (Tip)
+>
+> *(All front-panel movement looping and 0–8V analog CV features work identically on both hardware versions without any adapter).*
+
+---
+
 ## Chaining & Cabling Setup
 
 On both modules, the **Link IN** (left rear jack) serves as the primary MIDI output port:
