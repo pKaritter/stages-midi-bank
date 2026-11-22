@@ -77,6 +77,8 @@ void CvReader::Read(IOBuffer::Block* block) {
     CONSTRAIN(combined_value, -1.0f, 1.999995f);
 
     block->pot[i] = lp_pot_[i];
+    block->slider[i] = lp_slider_[i];
+    block->cv[i] = value;
     block->cv_slider[i] = combined_value;
   }
   

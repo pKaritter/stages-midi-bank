@@ -45,6 +45,8 @@ class IOBuffer {
   struct Block {
     float cv_slider[kNumChannels];
     float pot[kNumChannels];
+    float slider[kNumChannels];
+    float cv[kNumChannels];
     bool input_patched[kNumChannels];
     
     stmlib::GateFlags input[kNumChannels][kBlockSize];

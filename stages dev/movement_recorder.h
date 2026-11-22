@@ -241,6 +241,12 @@ class MovementRecorder {
     return fader_track_[channel].GetCurrentValue(live_fader);
   }
 
+  // Get current knob output value (0.0f to 1.0f)
+  float GetKnobValue(size_t channel, float live_knob) const {
+    if (channel >= kNumChannelsTotal) return live_knob;
+    return knob_track_[channel].GetCurrentValue(live_knob);
+  }
+
   // Get current fader 7-bit MIDI value (0 to 127)
   uint8_t GetFaderMidi(size_t channel, float live_fader) const {
     if (channel >= kNumChannelsTotal) return static_cast<uint8_t>(live_fader * 127.0f);

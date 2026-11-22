@@ -28,6 +28,7 @@ void Ui::Init(Settings* settings, MovementRecorder* movement_recorder) {
   fill(&click_pending_[0], &click_pending_[kNumSwitches], false);
   fill(&live_fader_[0], &live_fader_[kNumChannelsTotal], 0.0f);
   fill(&live_knob_[0], &live_knob_[kNumChannelsTotal], 0.0f);
+  fill(&cv_targets_[0], &cv_targets_[kNumChannelsTotal], 0);
   fill(&slider_led_counter_[0], &slider_led_counter_[kNumLEDs], 0);
   
   settings_ = settings;
@@ -118,12 +119,18 @@ void Ui::UpdateLEDs() {
       // Ping-pong loop playing: Solid Yellow/Amber
       color = LED_COLOR_YELLOW;
     } else {
-      color = LED_COLOR_OFF;
+      // Idle (no loop): show CV target status
+      // Yellow = CV modulates Knob, Off = CV modulates Fader
+      if (cv_targets_[i] == 1) {
+        color = LED_COLOR_YELLOW;
+      } else {
+        color = LED_COLOR_OFF;
+      }
     }
     leds_.set(LED_GROUP_UI + i, color);
 
-    // 2. Slider LED: smooth PWM brightness tracking current fader value (live or loop)
-    float fader_val = movement_recorder_->GetFaderValue(i, live_fader_[i]);
+    // 2. Slider LED: smooth PWM brightness tracking current fader value (live, loop, or modulated)
+    float fader_val = live_fader_[i];
     int brightness = static_cast<int>(fader_val * 15.0f);
     if (brightness < 0) brightness = 0;
     if (brightness > 15) brightness = 15;

@@ -56,6 +56,8 @@ Ui ui;
 
 MovementRecorder movement_recorder;
 MidiStreamer midi_streamer;
+uint8_t cv_target[kNumChannels] = {0};
+uint16_t gate_high_counter[kNumChannels] = {0};
 
 // Default interrupt handlers.
 extern "C" {
@@ -92,36 +94,83 @@ IOBuffer::Slice FillBuffer(size_t size) {
 }
 
 void Process(IOBuffer::Block* block, size_t size) {
-  // 1. Process movement recorder (recording, playback, clock quantization)
-  // Time/CV Input 1 or Gate Input 1 serves as clock sync
+  // 1. Process Gate inputs to determine CV modulation target (Fader vs Knob)
+  for (size_t c = 0; c < kNumChannels; ++c) {
+    bool gate_high = (block->input[c][0] & GATE_FLAG_HIGH) != 0;
+    bool gate_rising = (block->input[c][0] & GATE_FLAG_RISING) != 0;
+    bool gate_falling = (block->input[c][0] & GATE_FLAG_FALLING) != 0;
+
+    if (gate_rising) {
+      gate_high_counter[c] = 0;
+    }
+    if (gate_high) {
+      if (gate_high_counter[c] < 65535) ++gate_high_counter[c];
+      if (gate_high_counter[c] >= 200) {
+        // Sustained gate (> ~50ms): hold target on KNOB while high
+        cv_target[c] = 1;
+      }
+    }
+    if (gate_falling) {
+      if (gate_high_counter[c] < 200) {
+        // Short trigger/pulse (< 50ms): toggle target between Fader and Knob!
+        cv_target[c] ^= 1;
+      } else {
+        // Release of sustained gate: return to Fader
+        cv_target[c] = 0;
+      }
+    }
+  }
+
+  // 2. Process movement recorder (recording, playback, clock quantization)
+  // Time/CV Input 1 or Gate Input 1 can serve as clock sync
   bool clock_gate = (block->input[0][0] & GATE_FLAG_HIGH) != 0;
   movement_recorder.Process(
-      block->cv_slider,
+      block->slider,
       block->pot,
-      block->cv_slider[0],
+      block->cv[0],
       clock_gate);
 
-  // 2. Feed live fader & knob positions to UI for LED animation
-  ui.set_live_values(block->cv_slider, block->pot);
+  // 3. Apply Time/Level CV modulation to selected target (Fader or Knob)
+  float effective_fader[kNumChannels];
+  float effective_knob[kNumChannels];
+  uint8_t fader_midi[kNumChannels];
+  uint8_t knob_midi[kNumChannels];
 
-  // 3. Front-panel analog CV Output (0V to +8V) for each fader (recorded or live)
+  for (size_t c = 0; c < kNumChannels; ++c) {
+    float base_f = movement_recorder.GetFaderValue(c, block->slider[c]);
+    float base_k = movement_recorder.GetKnobValue(c, block->pot[c]);
+    float cv_in = block->cv[c];
+
+    if (cv_target[c] == 0) {
+      // CV modulates FADER
+      effective_fader[c] = base_f + cv_in;
+      effective_knob[c] = base_k;
+    } else {
+      // CV modulates KNOB
+      effective_knob[c] = base_k + cv_in;
+      effective_fader[c] = base_f;
+    }
+
+    CONSTRAIN(effective_fader[c], 0.0f, 1.0f);
+    CONSTRAIN(effective_knob[c], 0.0f, 1.0f);
+
+    fader_midi[c] = static_cast<uint8_t>(effective_fader[c] * 127.0f);
+    knob_midi[c] = static_cast<uint8_t>(effective_knob[c] * 127.0f);
+  }
+
+  // 4. Feed values to UI for LED animations (slider brightness + button LED target state)
+  ui.set_live_values(effective_fader, effective_knob);
+  ui.set_cv_targets(cv_target);
+
+  // 5. Front-panel analog CV Output (0V to +8V) for each fader (recorded or live, modulated)
   for (size_t channel = 0; channel < kNumChannels; ++channel) {
-    float cv_val = movement_recorder.GetFaderValue(channel, block->cv_slider[channel]);
-    uint16_t dac_val = settings.dac_code(channel, cv_val);
+    uint16_t dac_val = settings.dac_code(channel, effective_fader[channel]);
     for (size_t i = 0; i < size; ++i) {
       block->output[channel][i] = dac_val;
     }
   }
 
-  // 4. MIDI CC output via rear 3.5mm jacks (both Left and Right)
-  uint8_t fader_midi[kNumChannels];
-  uint8_t knob_midi[kNumChannels];
-  for (size_t channel = 0; channel < kNumChannels; ++channel) {
-    fader_midi[channel] = movement_recorder.GetFaderMidi(channel, block->cv_slider[channel]);
-    knob_midi[channel] = movement_recorder.GetKnobMidi(channel, block->pot[channel]);
-  }
-
-  // Emit standard 7-bit MIDI CC messages
+  // 6. MIDI CC output via rear 3.5mm jacks (continuous stream + real-time LFO/gestures)
   midi_streamer.Process(fader_midi, knob_midi);
 }
 

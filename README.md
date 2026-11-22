@@ -19,8 +19,18 @@ This firmware transforms one or two modules into a **24-channel MIDI controller*
   - **Long Press ($\ge 800\text{ ms}$):** Immediately deletes the **Knob loop** and returns the knob to live control.
 - **External Clock Synchronization:**
   - Patch an external clock or gate into **Jack 1** (Time/CV 1 or Gate 1) to quantize loop lengths to musical beats and eliminate phase drift.
-- **24-Channel MIDI Output (Rear Jacks):**
+- **Real-Time CV Modulation (Time/Level Jack):**
+  - Patch an external LFO, envelope, or CV source ($-5\text{V}$ to $+5\text{V}$ or $0\text{V}$ to $+8\text{V}$) into the Time/Level jack to modulate the parameter in real time.
+  - Modulates the **MIDI CC output**, the **front-panel analog CV output**, and the **slider LED** simultaneously!
+- **Dynamic Gate Modulation Routing (Gate Jack):**
+  - Use the Gate input to switch which control the incoming CV/LFO modulates:
+    - **Unpatched / 0V:** Modulates the **Fader** (Slider LED pulses with the LFO).
+    - **Sustained Gate (> 50ms):** Modulates the **Knob** while gate is HIGH; returns to the **Fader** when released (LOW).
+    - **Trigger / Clock Pulse (< 50ms):** Each pulse **toggles** modulation between **Fader** and **Knob** and latches!
+    - **Visual Feedback:** When idle (no loop playing), the Button LED is OFF when targeting the Fader, and lights up Yellow/Amber when targeting the Knob!
+- **24-Channel MIDI Output (Rear Jacks) with Always-On Streaming:**
   - Streams standard 7-bit MIDI Continuous Controller (CC) messages at standard 31,250 baud.
+  - **Continuous Active Streaming:** In addition to immediate zero-latency updates for hand gestures, loops, and LFOs, a background refresh cycle continuously streams all channels so your synth is never out of sync, even if you switch presets or plug in after boot.
   - Uses the rear 3.5mm **Link IN** jack configured as **TRS MIDI Type B** (+3.3V on Tip, TX on Ring, GND on Sleeve)—plug directly into compatible synths (e.g. Oxi Coral, ORN8, etc.) via a 3.5mm TRS-to-MIDI adapter/cable.
 - **Dual-Module Chaining:**
   - Connect two modules with a single standard 3.5mm TRS stereo patch cable.

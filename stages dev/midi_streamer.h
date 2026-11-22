@@ -30,6 +30,8 @@ class MidiStreamer {
     memset(last_local_knob_, 0xff, sizeof(last_local_knob_));
     memset(fader_throttle_, 0, sizeof(fader_throttle_));
     memset(knob_throttle_, 0, sizeof(knob_throttle_));
+    heartbeat_counter_ = 0;
+    heartbeat_index_ = 0;
 
 #if STAGES_ROLE == 1
     // MODULE 1 (Master / Synth Output):
@@ -96,6 +98,20 @@ class MidiStreamer {
       }
     }
 
+    // Continuous background refresh: resend one CC every ~25ms (100 ticks @ 3906Hz)
+    // Ensures Stages is ALWAYS actively streaming MIDI and synths never lose sync
+    ++heartbeat_counter_;
+    if (heartbeat_counter_ >= 100) {
+      heartbeat_counter_ = 0;
+      if (heartbeat_index_ < 6) {
+        QueueMidiCC(midi_channel, fader_cc[heartbeat_index_], local_fader_midi[heartbeat_index_]);
+      } else if (heartbeat_index_ < 12) {
+        size_t k_idx = heartbeat_index_ - 6;
+        QueueMidiCC(midi_channel, knob_cc[k_idx], local_knob_midi[k_idx]);
+      }
+      heartbeat_index_ = (heartbeat_index_ + 1) % 12;
+    }
+
     // Flush outgoing transmissions on Link IN (left_link_)
     FlushTxLeft();
   }
@@ -120,6 +136,8 @@ class MidiStreamer {
   uint8_t last_local_knob_[6];
   uint8_t fader_throttle_[6];
   uint8_t knob_throttle_[6];
+  uint32_t heartbeat_counter_;
+  uint8_t heartbeat_index_;
 
   void QueueMidiCC(uint8_t channel, uint8_t cc, uint8_t value) {
     uint8_t status = 0xB0 | ((channel - 1) & 0x0F);

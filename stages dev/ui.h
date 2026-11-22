@@ -32,6 +32,12 @@ class Ui {
     }
   }
 
+  void set_cv_targets(const uint8_t* targets) {
+    for (size_t i = 0; i < kNumChannelsTotal; ++i) {
+      cv_targets_[i] = targets[i];
+    }
+  }
+
   void set_slider_led(int i, bool value, int duration) {
     if (value) {
       slider_led_counter_[i] = duration;
@@ -56,6 +62,7 @@ class Ui {
   bool click_pending_[kNumSwitches];
   float live_fader_[kNumChannelsTotal];
   float live_knob_[kNumChannelsTotal];
+  uint8_t cv_targets_[kNumChannelsTotal];
 
   Settings* settings_;
   MovementRecorder* movement_recorder_;
