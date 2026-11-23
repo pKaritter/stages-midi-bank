@@ -58,6 +58,7 @@ MovementRecorder movement_recorder;
 MidiStreamer midi_streamer;
 uint8_t cv_target[kNumChannels] = {0};
 uint16_t gate_high_counter[kNumChannels] = {0};
+uint16_t boot_settle_counter = 0;
 
 // Default interrupt handlers.
 extern "C" {
@@ -95,35 +96,55 @@ IOBuffer::Slice FillBuffer(size_t size) {
 
 void Process(IOBuffer::Block* block, size_t size) {
   // 1. Process Gate inputs to determine CV modulation target (Fader vs Knob)
-  for (size_t c = 0; c < kNumChannels; ++c) {
-    bool gate_high = (block->input[c][0] & GATE_FLAG_HIGH) != 0;
-    bool gate_rising = (block->input[c][0] & GATE_FLAG_RISING) != 0;
-    bool gate_falling = (block->input[c][0] & GATE_FLAG_FALLING) != 0;
-
-    if (gate_rising) {
-      gate_high_counter[c] = 0;
-    }
-    if (gate_high) {
-      if (gate_high_counter[c] < 65535) ++gate_high_counter[c];
-      if (gate_high_counter[c] >= 200) {
-        // Sustained gate (> ~50ms): hold target on KNOB while high
-        cv_target[c] = 1;
+  // Wait ~50ms on boot for gate normalization probing to settle, and ignore unpatched jacks
+  // (unpatched gate jacks carry the internal normalization probe signal!)
+  if (boot_settle_counter < 200) {
+    ++boot_settle_counter;
+  } else {
+    for (size_t c = 0; c < kNumChannels; ++c) {
+      if (!block->input_patched[c]) {
+        if (gate_high_counter[c] >= 200) {
+          // Sustained gate cable was unplugged: return to Fader
+          cv_target[c] = 0;
+        }
+        gate_high_counter[c] = 0;
+        continue;
       }
-    }
-    if (gate_falling) {
-      if (gate_high_counter[c] < 200) {
-        // Short trigger/pulse (< 50ms): toggle target between Fader and Knob!
-        cv_target[c] ^= 1;
-      } else {
-        // Release of sustained gate: return to Fader
-        cv_target[c] = 0;
+
+      bool gate_high = (block->input[c][size - 1] & GATE_FLAG_HIGH) != 0;
+      bool gate_rising = false;
+      bool gate_falling = false;
+      for (size_t i = 0; i < size; ++i) {
+        if (block->input[c][i] & GATE_FLAG_RISING) gate_rising = true;
+        if (block->input[c][i] & GATE_FLAG_FALLING) gate_falling = true;
+      }
+
+      if (gate_rising) {
+        gate_high_counter[c] = 0;
+      }
+      if (gate_high) {
+        if (gate_high_counter[c] < 65535) ++gate_high_counter[c];
+        if (gate_high_counter[c] >= 200) {
+          // Sustained gate (> ~50ms): hold target on KNOB while high
+          cv_target[c] = 1;
+        }
+      }
+      if (gate_falling) {
+        if (gate_high_counter[c] < 200) {
+          // Short trigger/pulse (< 50ms): toggle target between Fader and Knob!
+          cv_target[c] ^= 1;
+        } else {
+          // Release of sustained gate: return to Fader
+          cv_target[c] = 0;
+        }
+        gate_high_counter[c] = 0;
       }
     }
   }
 
   // 2. Process movement recorder (recording, playback, clock quantization)
-  // Time/CV Input 1 or Gate Input 1 can serve as clock sync
-  bool clock_gate = (block->input[0][0] & GATE_FLAG_HIGH) != 0;
+  // Time/CV Input 1 or patched Gate Input 1 can serve as clock sync
+  bool clock_gate = block->input_patched[0] && ((block->input[0][0] & GATE_FLAG_HIGH) != 0);
   movement_recorder.Process(
       block->slider,
       block->pot,

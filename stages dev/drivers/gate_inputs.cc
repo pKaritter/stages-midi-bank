@@ -73,7 +73,7 @@ void GateInputs::Init() {
     GPIO_Init(gate_input_definition[i].gpio, &gpio_init);
     normalization_mismatch_count_[i] = 0;
     previous_flags_[i] = 0;
-    normalized_[i] = false;
+    normalized_[i] = true;
   }
 
   normalization_probe_state_ = 0;
