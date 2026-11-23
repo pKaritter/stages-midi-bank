@@ -28,9 +28,9 @@ This firmware transforms one or two modules into a **24-channel MIDI controller*
     - **Sustained Gate (> 50ms):** Modulates the **Knob** while gate is HIGH; returns to the **Fader** when released (LOW).
     - **Trigger / Clock Pulse (< 50ms):** Each pulse **toggles** modulation between **Fader** and **Knob** and latches!
     - **Visual Feedback:** When idle (no loop playing), the Button LED is **OFF** when targeting the Fader, and gives a **slow yellow blink** when targeting the Knob (easily distinguishable from Solid Yellow Ping-Pong loops).
-- **24-Channel MIDI Output (Rear Jacks) with Always-On Streaming:**
-  - Streams standard 7-bit MIDI Continuous Controller (CC) messages at standard 31,250 baud.
-  - **Continuous Active Streaming:** In addition to immediate zero-latency updates for hand gestures, loops, and LFOs, a background refresh cycle continuously streams all channels so your synth is never out of sync, even if you switch presets or plug in after boot.
+- **24-Channel MIDI Output (Rear Jacks):**
+  - Streams standard 7-bit MIDI Continuous Controller (CC) messages at standard 31,250 baud whenever any fader, knob, recorded loop, or incoming Time/Level CV/LFO changes.
+  - Uses atomic 3-byte packet merging between Module 1 and Module 2 so simultaneous gestures and LFOs never corrupt each other.
   - Uses the rear 3.5mm **Link IN** jack configured as **TRS MIDI Type B** (+3.3V on Tip, TX on Ring, GND on Sleeve)—plug directly into compatible synths (e.g. Oxi Coral, ORN8, etc.) via a 3.5mm TRS-to-MIDI adapter/cable.
 - **Dual-Module Chaining:**
   - Connect two modules with a single standard 3.5mm TRS stereo patch cable.

@@ -30,8 +30,7 @@ class MidiStreamer {
     memset(last_local_knob_, 0xff, sizeof(last_local_knob_));
     memset(fader_throttle_, 0, sizeof(fader_throttle_));
     memset(knob_throttle_, 0, sizeof(knob_throttle_));
-    heartbeat_counter_ = 0;
-    heartbeat_index_ = 0;
+    rx_index_ = 0;
 
 #if STAGES_ROLE == 1
     // MODULE 1 (Master / Synth Output):
@@ -54,11 +53,21 @@ class MidiStreamer {
     
 #if STAGES_ROLE == 1
     // MODULE 1: Read incoming CC 13-24 from Module 2 (received on Link OUT PC5)
-    // and forward directly to Link IN (Synth output)!
+    // Reassemble complete 3-byte MIDI messages before forwarding atomically so
+    // Module 1's own CC messages can never interleave mid-packet!
     if (right_link_) {
       while (right_link_->available() > 0) {
         uint8_t byte = right_link_->Read();
-        PushByteLeft(byte);
+        if (byte & 0x80) {
+          rx_msg_[0] = byte;
+          rx_index_ = 1;
+        } else if (rx_index_ > 0 && rx_index_ < 3) {
+          rx_msg_[rx_index_++] = byte;
+          if (rx_index_ == 3) {
+            QueueRaw3ByteLeft(rx_msg_[0], rx_msg_[1], rx_msg_[2]);
+            rx_index_ = 0;
+          }
+        }
       }
     }
 #endif
@@ -98,20 +107,6 @@ class MidiStreamer {
       }
     }
 
-    // Continuous background refresh: resend one CC every ~25ms (100 ticks @ 3906Hz)
-    // Ensures Stages is ALWAYS actively streaming MIDI and synths never lose sync
-    ++heartbeat_counter_;
-    if (heartbeat_counter_ >= 100) {
-      heartbeat_counter_ = 0;
-      if (heartbeat_index_ < 6) {
-        QueueMidiCC(midi_channel, fader_cc[heartbeat_index_], local_fader_midi[heartbeat_index_]);
-      } else if (heartbeat_index_ < 12) {
-        size_t k_idx = heartbeat_index_ - 6;
-        QueueMidiCC(midi_channel, knob_cc[k_idx], local_knob_midi[k_idx]);
-      }
-      heartbeat_index_ = (heartbeat_index_ + 1) % 12;
-    }
-
     // Flush outgoing transmissions on Link IN (left_link_)
     FlushTxLeft();
   }
@@ -136,15 +131,10 @@ class MidiStreamer {
   uint8_t last_local_knob_[6];
   uint8_t fader_throttle_[6];
   uint8_t knob_throttle_[6];
-  uint32_t heartbeat_counter_;
-  uint8_t heartbeat_index_;
+  uint8_t rx_msg_[3];
+  uint8_t rx_index_;
 
-  void QueueMidiCC(uint8_t channel, uint8_t cc, uint8_t value) {
-    uint8_t status = 0xB0 | ((channel - 1) & 0x0F);
-
-    // Both Module 1 and Module 2 transmit out of left_link_ (Link IN)!
-    // Module 1 transmits CC 1-12 to Synth.
-    // Module 2 transmits CC 13-24 over patch cable to Module 1.
+  void QueueRaw3ByteLeft(uint8_t b0, uint8_t b1, uint8_t b2) {
     size_t head_l = tx_head_left_;
     size_t tail_l = tx_tail_left_;
     size_t free_l = (tail_l > head_l)
@@ -152,10 +142,15 @@ class MidiStreamer {
         : (kMidiTxBufferSize - (head_l - tail_l) - 1);
 
     if (free_l >= 3) {
-      PushByteLeft(status);
-      PushByteLeft(cc & 0x7F);
-      PushByteLeft(value & 0x7F);
+      PushByteLeft(b0);
+      PushByteLeft(b1);
+      PushByteLeft(b2);
     }
+  }
+
+  void QueueMidiCC(uint8_t channel, uint8_t cc, uint8_t value) {
+    uint8_t status = 0xB0 | ((channel - 1) & 0x0F);
+    QueueRaw3ByteLeft(status, cc & 0x7F, value & 0x7F);
   }
 
   void PushByteLeft(uint8_t b) {
