@@ -116,6 +116,10 @@ Pre-compiled audio bootloader files are located in [`firmware_releases/`](firmwa
    - The module LEDs will illuminate progressively as data packets are verified.
    - When finished, all LEDs will flash green and the module will restart with the new firmware.
 
+> [!TIP]
+> **Flashing sweet spot (tested on Behringer Steps):**
+> Most reliable flashing results were achieved using **Ableton Live** at **48,000 Hz** sample rate (Warp **OFF**), output gain at **+4.3 dB**, and the **fader on Steps set to roughly 75%**.
+
 ---
 
 ## Building from Source
