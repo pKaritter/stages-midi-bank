@@ -8,26 +8,19 @@ This firmware transforms one or two modules into a **24-channel MIDI controller*
 
 ## Features
 
-- **Movement Recording & Looping (Faders & Knobs):**
-  - Record hand gestures in real time up to 10 seconds per loop.
-  - Independent gesture tracks for the **Fader** and the **Pot (Knob)** on every channel (12 independent gesture tracks per module, 24 total across two chained modules).
-  - Forward and Ping-Pong playback modes with smooth sub-sample interpolation.
-  - Visual status feedback via the channel LEDs (Red = Armed/Recording, Green = Forward loop, Yellow = Ping-pong loop).
-- **Instant Gesture Management:**
-  - **Single Tap:** Arms channel $\rightarrow$ starts recording on the first control moved $\rightarrow$ taps again to close and loop. While playing, single tap toggles between Forward and Ping-Pong modes.
-  - **Double Tap:** Immediately deletes the **Fader loop** and returns the fader to live control.
-  - **Long Press ($\ge 800\text{ ms}$):** Immediately deletes the **Knob loop** and returns the knob to live control.
-- **External Clock Synchronization:**
-  - Patch an external clock or gate into **Jack 1** (Time/CV 1 or Gate 1) to quantize loop lengths to musical beats and eliminate phase drift.
+- **Movement Recording & Ping-Pong Looping (Faders & Knobs — Simultaneously!):**
+  - Record hand gestures in real time up to 10 seconds per loop—**independently or simultaneously** on both the Fader and the Knob of the same channel!
+  - Always plays back in smooth **Ping-Pong** mode by default.
+- **Super-Simple Controls:**
+  - **Single Short Press:** Arms the channel (**Blinking Red**). Move the fader, the knob, or **both at the same time** to start recording (**Solid Red**). Press again to close and loop in Ping-Pong mode.
+  - **Touch-to-Clear:** Simply move a looping fader or knob with your hand to instantly remove its loop and return to live control!
+  - **Double Press:** Switches what the channel's **Time/Level CV input** modulates:
+    - **Green LED:** CV modulates the **Fader** (default).
+    - **Orange LED:** CV modulates the **Knob**.
+    - *(Solid = idle/live; Pulsing = loop playing).*
+  - **Long Press ($\ge 800\text{ ms}$):** Clears both loops on that channel immediately.
 - **Real-Time CV Modulation (Time/Level Jack):**
-  - Patch an external LFO, envelope, or CV source ($-5\text{V}$ to $+5\text{V}$ or $0\text{V}$ to $+8\text{V}$) into the Time/Level jack to modulate the parameter in real time.
-  - Modulates the **MIDI CC output**, the **front-panel analog CV output**, and the **slider LED** simultaneously!
-- **Dynamic Gate Modulation Routing (Gate Jack):**
-  - Use the Gate input to switch which control the incoming CV/LFO modulates:
-    - **Unpatched / 0V:** Modulates the **Fader** (Slider LED pulses with the LFO).
-    - **Sustained Gate (> 50ms):** Modulates the **Knob** while gate is HIGH; returns to the **Fader** when released (LOW).
-    - **Trigger / Clock Pulse (< 50ms):** Each pulse **toggles** modulation between **Fader** and **Knob** and latches!
-    - **Visual Feedback:** When idle (no loop playing), the Button LED is **OFF** when targeting the Fader, and gives a **slow yellow blink** when targeting the Knob (easily distinguishable from Solid Yellow Ping-Pong loops).
+  - Patch an external LFO, envelope, or CV source ($-5\text{V}$ to $+5\text{V}$ or $0\text{V}$ to $+8\text{V}$) into the Time/Level jack to modulate the selected control (Fader or Knob) in real time, updating MIDI CC, front-panel analog CV ($0\text{V}$ to $+8\text{V}$), and the slider LED.
 - **24-Channel MIDI Output (Rear Jacks):**
   - Streams standard 7-bit MIDI Continuous Controller (CC) messages at standard 31,250 baud whenever any fader, knob, recorded loop, or incoming Time/Level CV/LFO changes.
   - Uses atomic 3-byte packet merging between Module 1 and Module 2 so simultaneous gestures and LFOs never corrupt each other.

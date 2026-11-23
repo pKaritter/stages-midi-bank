@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <string.h>
 #include <algorithm>
+#include <cmath>
 
 namespace stages {
 
@@ -11,6 +12,7 @@ const size_t kNumChannelsTotal = 6;
 // 500 samples at 50Hz = 10 seconds per loop track
 const size_t kMaxLoopSamples = 500;
 const float kMotionThreshold = 0.035f;
+const float kTouchClearThreshold = 0.045f;
 
 enum LoopMode {
   LOOP_MODE_FORWARD = 0,
@@ -19,9 +21,8 @@ enum LoopMode {
 
 enum TrackState {
   TRACK_STATE_IDLE = 0,
-  TRACK_STATE_ARMED = 1,
-  TRACK_STATE_RECORDING = 2,
-  TRACK_STATE_PLAYING = 3,
+  TRACK_STATE_RECORDING = 1,
+  TRACK_STATE_PLAYING = 2,
 };
 
 struct LoopTrack {
@@ -31,7 +32,7 @@ struct LoopTrack {
   bool pingpong_reverse;
   TrackState state;
   LoopMode mode;
-  float baseline;
+  float play_baseline;       // Physical resting position when loop started (for touch-to-clear)
 
   void Init() {
     memset(buffer, 0, sizeof(buffer));
@@ -39,8 +40,8 @@ struct LoopTrack {
     playback_phase = 0.0f;
     pingpong_reverse = false;
     state = TRACK_STATE_IDLE;
-    mode = LOOP_MODE_FORWARD;
-    baseline = 0.0f;
+    mode = LOOP_MODE_PINGPONG; // Always Ping-Pong by default
+    play_baseline = 0.0f;
   }
 
   void Clear() {
@@ -50,13 +51,9 @@ struct LoopTrack {
     state = TRACK_STATE_IDLE;
   }
 
-  void Arm(float current_val) {
-    baseline = current_val;
-    state = TRACK_STATE_ARMED;
-  }
-
   void StartRecording(float current_val) {
     state = TRACK_STATE_RECORDING;
+    mode = LOOP_MODE_PINGPONG;
     length = 0;
     buffer[0] = static_cast<uint8_t>(std::max(0.0f, std::min(127.0f, current_val * 127.0f)));
     length = 1;
@@ -71,7 +68,7 @@ struct LoopTrack {
     }
   }
 
-  void StopRecording(size_t quantized_len = 0) {
+  void StopRecording(float resting_val, size_t quantized_len = 0) {
     if (state == TRACK_STATE_RECORDING) {
       if (length < 4) {
         // Too short, abort
@@ -82,12 +79,11 @@ struct LoopTrack {
           length = quantized_len;
         }
         state = TRACK_STATE_PLAYING;
+        mode = LOOP_MODE_PINGPONG;
         playback_phase = 0.0f;
         pingpong_reverse = false;
+        play_baseline = resting_val;
       }
-    } else if (state == TRACK_STATE_ARMED) {
-      // Disarm if nothing was recorded
-      state = (length > 0) ? TRACK_STATE_PLAYING : TRACK_STATE_IDLE;
     }
   }
 
@@ -102,7 +98,7 @@ struct LoopTrack {
         playback_phase -= static_cast<float>(length);
       }
     } else {
-      // Ping-pong mode
+      // Ping-pong mode (default)
       if (!pingpong_reverse) {
         playback_phase += 1.0f;
         if (playback_phase >= static_cast<float>(length - 1)) {
@@ -142,10 +138,6 @@ struct LoopTrack {
     int midi = static_cast<int>(val * 127.0f + 0.5f);
     return static_cast<uint8_t>(std::max(0, std::min(127, midi)));
   }
-
-  void ToggleMode() {
-    mode = (mode == LOOP_MODE_FORWARD) ? LOOP_MODE_PINGPONG : LOOP_MODE_FORWARD;
-  }
 };
 
 class MovementRecorder {
@@ -158,6 +150,11 @@ class MovementRecorder {
       fader_track_[i].Init();
       knob_track_[i].Init();
       channel_armed_[i] = false;
+      cv_target_[i] = 0; // Default: CV modulates Fader (Green)
+      arm_fader_baseline_[i] = 0.0f;
+      arm_knob_baseline_[i] = 0.0f;
+      last_slider_[i] = 0.0f;
+      last_pot_[i] = 0.0f;
     }
     clock_interval_ = 0;
     clock_timer_ = 0;
@@ -165,19 +162,24 @@ class MovementRecorder {
     subsample_ = 0;
   }
 
-  // Called at 500 Hz (every 2ms) from main UI/audio loop
+  // Called at ~3906 Hz from main audio/IO loop
   void Process(
       const float* fader,
       const float* knob,
       float clock_input,
       bool clock_gate_input) {
     
-    // 1. Clock detection on Time/CV Input 1 or Gate Input 1
+    for (size_t i = 0; i < kNumChannelsTotal; ++i) {
+      last_slider_[i] = fader[i];
+      last_pot_[i] = knob[i];
+    }
+
+    // 1. Clock detection on patched Gate Input 1
     DetectClock(clock_input, clock_gate_input);
 
-    // 2. Subsample to 50 Hz (every 20ms = 10 ticks) for gesture recording/playback
+    // 2. Subsample to ~50 Hz for gesture recording/playback (3906 / 78 ≈ 50 Hz)
     ++subsample_;
-    if (subsample_ >= 10) {
+    if (subsample_ >= 78) {
       subsample_ = 0;
 
       for (size_t i = 0; i < kNumChannelsTotal; ++i) {
@@ -186,53 +188,58 @@ class MovementRecorder {
     }
   }
 
-  void OnSingleClick(size_t channel, float live_fader, float live_knob) {
+  // Short press: Arm for recording (fader, knob, or BOTH simultaneously!) / Stop & Loop in Ping-Pong
+  void OnSingleClick(size_t channel, float /*live_fader*/, float /*live_knob*/) {
     if (channel >= kNumChannelsTotal) return;
 
-    if (fader_track_[channel].state == TRACK_STATE_RECORDING ||
-        knob_track_[channel].state == TRACK_STATE_RECORDING) {
-      // 1. If currently recording, close and commit the loop!
-      size_t q_len = QuantizeLength(
-          fader_track_[channel].state == TRACK_STATE_RECORDING
-              ? fader_track_[channel].length
-              : knob_track_[channel].length);
-      fader_track_[channel].StopRecording(q_len);
-      knob_track_[channel].StopRecording(q_len);
+    bool is_recording = (fader_track_[channel].state == TRACK_STATE_RECORDING) ||
+                        (knob_track_[channel].state == TRACK_STATE_RECORDING);
+
+    if (is_recording) {
+      // Stop recording and commit whichever track(s) were recorded into Ping-Pong playback!
+      size_t rec_len = 0;
+      if (fader_track_[channel].state == TRACK_STATE_RECORDING) {
+        rec_len = fader_track_[channel].length;
+      }
+      if (knob_track_[channel].state == TRACK_STATE_RECORDING && knob_track_[channel].length > rec_len) {
+        rec_len = knob_track_[channel].length;
+      }
+      size_t q_len = QuantizeLength(rec_len);
+
+      if (fader_track_[channel].state == TRACK_STATE_RECORDING) {
+        fader_track_[channel].StopRecording(last_slider_[channel], q_len);
+      }
+      if (knob_track_[channel].state == TRACK_STATE_RECORDING) {
+        knob_track_[channel].StopRecording(last_pot_[channel], q_len);
+      }
       channel_armed_[channel] = false;
     } else if (channel_armed_[channel]) {
-      // 2. If armed and user clicked without moving anything -> cancel arm
+      // Armed without moving anything -> cancel arming
       channel_armed_[channel] = false;
-      fader_track_[channel].StopRecording();
-      knob_track_[channel].StopRecording();
-    } else if (fader_track_[channel].state == TRACK_STATE_PLAYING ||
-               knob_track_[channel].state == TRACK_STATE_PLAYING) {
-      // 3. If playing, toggle between Forward and Ping-Pong loop mode
-      if (fader_track_[channel].state == TRACK_STATE_PLAYING) {
-        fader_track_[channel].ToggleMode();
-      }
-      if (knob_track_[channel].state == TRACK_STATE_PLAYING) {
-        knob_track_[channel].ToggleMode();
-      }
     } else {
-      // 4. If idle, arm channel and wait to see what is moved first
+      // Arm channel: moving fader, knob, or BOTH simultaneously will record them!
       channel_armed_[channel] = true;
-      fader_track_[channel].Arm(live_fader);
-      knob_track_[channel].Arm(live_knob);
+      arm_fader_baseline_[channel] = last_slider_[channel];
+      arm_knob_baseline_[channel] = last_pot_[channel];
     }
   }
 
+  // Double press: Toggle CV modulation target between Fader (Green) and Knob (Orange)
   void OnDoubleClick(size_t channel) {
     if (channel >= kNumChannelsTotal) return;
-    // Double click deletes fader recording and returns to live
+    cv_target_[channel] ^= 1;
+  }
+
+  // Long press (>= 800ms): Clear both loops on this channel and disarm
+  void OnButtonLongPress(size_t channel) {
+    if (channel >= kNumChannelsTotal) return;
     fader_track_[channel].Clear();
+    knob_track_[channel].Clear();
     channel_armed_[channel] = false;
   }
 
-  void OnButtonLongPress(size_t channel) {
-    if (channel >= kNumChannelsTotal) return;
-    // Long press deletes knob recording and returns to live
-    knob_track_[channel].Clear();
-    channel_armed_[channel] = false;
+  inline uint8_t cv_target(size_t channel) const {
+    return (channel < kNumChannelsTotal) ? cv_target_[channel] : 0;
   }
 
   // Get current fader output value (0.0f to 1.0f) for CV OUT jack and Slider LED
@@ -259,32 +266,20 @@ class MovementRecorder {
     return knob_track_[channel].GetMidiValue(live_knob);
   }
 
-  // Button LED color state for UI
-  // Returns: 0 = Off, 1 = Green (Normal loop), 2 = Yellow (PingPong), 3 = Red (Armed/Recording)
-  uint8_t GetButtonLedState(size_t channel) const {
-    if (channel >= kNumChannelsTotal) return 0;
-
-    // Recording or Armed takes precedence (Red)
-    if (channel_armed_[channel] ||
-        fader_track_[channel].state == TRACK_STATE_RECORDING ||
-        knob_track_[channel].state == TRACK_STATE_RECORDING) {
-      return 3; // Red
-    }
-
-    // If either track is playing, show the loop mode
-    if (fader_track_[channel].state == TRACK_STATE_PLAYING ||
-        knob_track_[channel].state == TRACK_STATE_PLAYING) {
-      LoopMode mode = (fader_track_[channel].state == TRACK_STATE_PLAYING)
-          ? fader_track_[channel].mode
-          : knob_track_[channel].mode;
-      return (mode == LOOP_MODE_PINGPONG) ? 2 : 1; // 2 = Yellow, 1 = Green
-    }
-
-    return 0; // Off
+  bool IsRecording(size_t channel) const {
+    if (channel >= kNumChannelsTotal) return false;
+    return fader_track_[channel].state == TRACK_STATE_RECORDING ||
+           knob_track_[channel].state == TRACK_STATE_RECORDING;
   }
 
   bool IsArmed(size_t channel) const {
-    return (channel < kNumChannelsTotal) && channel_armed_[channel];
+    return (channel < kNumChannelsTotal) && channel_armed_[channel] && !IsRecording(channel);
+  }
+
+  bool IsPlaying(size_t channel) const {
+    if (channel >= kNumChannelsTotal) return false;
+    return fader_track_[channel].state == TRACK_STATE_PLAYING ||
+           knob_track_[channel].state == TRACK_STATE_PLAYING;
   }
 
   const LoopTrack& fader_track(size_t channel) const { return fader_track_[channel]; }
@@ -294,6 +289,11 @@ class MovementRecorder {
   LoopTrack fader_track_[kNumChannelsTotal];
   LoopTrack knob_track_[kNumChannelsTotal];
   bool channel_armed_[kNumChannelsTotal];
+  uint8_t cv_target_[kNumChannelsTotal]; // 0 = Fader (Green), 1 = Knob (Orange)
+  float arm_fader_baseline_[kNumChannelsTotal];
+  float arm_knob_baseline_[kNumChannelsTotal];
+  float last_slider_[kNumChannelsTotal];
+  float last_pot_[kNumChannelsTotal];
 
   // Clock tracking
   uint32_t clock_timer_;
@@ -302,54 +302,68 @@ class MovementRecorder {
   uint8_t subsample_;
 
   void ProcessChannel50Hz(size_t i, float live_fader, float live_knob) {
-    // Check for first movement if armed
+    // 1. If armed (or already recording one track), watch BOTH fader and knob!
+    //    This allows recording fader only, knob only, or BOTH simultaneously!
     if (channel_armed_[i]) {
-      float d_fader = std::abs(live_fader - fader_track_[i].baseline);
-      float d_knob = std::abs(live_knob - knob_track_[i].baseline);
-
-      if (d_fader > kMotionThreshold && d_fader >= d_knob) {
-        // FADER moved first! Start recording fader track only
-        channel_armed_[i] = false;
-        fader_track_[i].StartRecording(live_fader);
-        knob_track_[i].StopRecording(); // disarm knob track
-      } else if (d_knob > kMotionThreshold) {
-        // KNOB moved first! Start recording knob track only
-        channel_armed_[i] = false;
-        knob_track_[i].StartRecording(live_knob);
-        fader_track_[i].StopRecording(); // disarm fader track
+      if (fader_track_[i].state != TRACK_STATE_RECORDING) {
+        if (std::abs(live_fader - arm_fader_baseline_[i]) > kMotionThreshold) {
+          fader_track_[i].StartRecording(live_fader);
+        }
+      }
+      if (knob_track_[i].state != TRACK_STATE_RECORDING) {
+        if (std::abs(live_knob - arm_knob_baseline_[i]) > kMotionThreshold) {
+          knob_track_[i].StartRecording(live_knob);
+        }
+      }
+    } else {
+      // 2. Not armed/recording: Touch-to-Clear!
+      //    Moving the fader clears the fader loop; moving the knob clears the knob loop!
+      if (fader_track_[i].state == TRACK_STATE_PLAYING) {
+        if (std::abs(live_fader - fader_track_[i].play_baseline) > kTouchClearThreshold) {
+          fader_track_[i].Clear();
+        }
+      }
+      if (knob_track_[i].state == TRACK_STATE_PLAYING) {
+        if (std::abs(live_knob - knob_track_[i].play_baseline) > kTouchClearThreshold) {
+          knob_track_[i].Clear();
+        }
       }
     }
 
-    // Record sample if recording
+    // 3. Record samples (and auto-close into Ping-Pong if max 10s buffer is reached)
     if (fader_track_[i].state == TRACK_STATE_RECORDING) {
       fader_track_[i].RecordSample(live_fader);
+      if (fader_track_[i].length >= kMaxLoopSamples) {
+        fader_track_[i].StopRecording(live_fader);
+        if (knob_track_[i].state != TRACK_STATE_RECORDING) {
+          channel_armed_[i] = false;
+        }
+      }
     }
     if (knob_track_[i].state == TRACK_STATE_RECORDING) {
       knob_track_[i].RecordSample(live_knob);
+      if (knob_track_[i].length >= kMaxLoopSamples) {
+        knob_track_[i].StopRecording(live_knob);
+        if (fader_track_[i].state != TRACK_STATE_RECORDING) {
+          channel_armed_[i] = false;
+        }
+      }
     }
 
-    // Step playback
+    // 4. Step playback
     fader_track_[i].StepPlayback();
     knob_track_[i].StepPlayback();
   }
 
-  void DetectClock(float clock_cv, bool clock_gate) {
-    // CV input > 1.5V or digital Gate input high
-    bool is_high = (clock_cv > 0.18f) || clock_gate;
+  void DetectClock(float /*clock_cv*/, bool clock_gate) {
+    // Only use patched Gate Input 1 for clock quantization
+    bool is_high = clock_gate;
 
     if (is_high && !prev_clock_state_) {
-      // Rising edge detected
       if (clock_timer_ > 10 && clock_timer_ < 1000) {
         clock_interval_ = clock_timer_;
       }
       clock_timer_ = 0;
-
-      // Resync playback phase to prevent drift
-      for (size_t i = 0; i < kNumChannelsTotal; ++i) {
-        if (fader_track_[i].state == TRACK_STATE_PLAYING && clock_interval_ > 0) {
-          // Soft-align phase at beat boundaries
-        }
-      }
     } else {
       if (clock_timer_ < 1000) {
         ++clock_timer_;
@@ -362,7 +376,6 @@ class MovementRecorder {
     if (clock_interval_ < 5 || raw_len < 4) {
       return raw_len;
     }
-    // Snap to nearest multiple of clock interval
     size_t beats = (raw_len + clock_interval_ / 2) / clock_interval_;
     if (beats < 1) beats = 1;
     size_t q_len = beats * clock_interval_;
@@ -373,4 +386,3 @@ class MovementRecorder {
 }  // namespace stages
 
 #endif  // STAGES_MOVEMENT_RECORDER_H_
-

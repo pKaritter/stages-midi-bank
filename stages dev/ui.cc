@@ -99,33 +99,27 @@ void Ui::UpdateLEDs() {
     }
 
     // 1. Button LED
-    uint8_t state = movement_recorder_->GetButtonLedState(i);
+    //    - Armed: Fast Blinking Red
+    //    - Recording: Solid Red
+    //    - Idle: Solid Green (CV -> Fader) or Solid Orange (CV -> Knob)
+    //    - Playing Loop: Pulsing Green (CV -> Fader) or Pulsing Orange (CV -> Knob)
     LedColor color = LED_COLOR_OFF;
+    LedColor target_color = (movement_recorder_->cv_target(i) == 1)
+        ? LED_COLOR_YELLOW   // Orange/Amber = CV affects Knob
+        : LED_COLOR_GREEN;   // Green = CV affects Fader
 
-    if (state == 3) {
-      // Red: Armed or Recording
-      if (movement_recorder_->IsArmed(i)) {
-        // Armed: Blink Red at ~4 Hz
-        bool blink = (now >> 7) & 1;
-        color = blink ? LED_COLOR_RED : LED_COLOR_OFF;
-      } else {
-        // Actively recording: Solid Red
-        color = LED_COLOR_RED;
-      }
-    } else if (state == 1) {
-      // Forward loop playing: Solid Green
-      color = LED_COLOR_GREEN;
-    } else if (state == 2) {
-      // Ping-pong loop playing: Solid Yellow/Amber
-      color = LED_COLOR_YELLOW;
+    if (movement_recorder_->IsRecording(i)) {
+      color = LED_COLOR_RED;
+    } else if (movement_recorder_->IsArmed(i)) {
+      bool blink = (now >> 7) & 1;
+      color = blink ? LED_COLOR_RED : LED_COLOR_OFF;
+    } else if (movement_recorder_->IsPlaying(i)) {
+      // Rhythmic pulse in the CV target color so you see BOTH loop active & CV target!
+      bool pulse = (now % 500) < 300;
+      color = pulse ? target_color : LED_COLOR_OFF;
     } else {
-      // Idle (no loop): show CV target status
-      // Brief yellow blink (every 0.8s) = CV modulates Knob, Off = CV modulates Fader
-      if (cv_targets_[i] == 1) {
-        color = ((now % 800) < 150) ? LED_COLOR_YELLOW : LED_COLOR_OFF;
-      } else {
-        color = LED_COLOR_OFF;
-      }
+      // Idle: solid Green (CV -> Fader) or solid Orange (CV -> Knob)
+      color = target_color;
     }
     leds_.set(LED_GROUP_UI + i, color);
 
