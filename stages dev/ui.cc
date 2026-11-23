@@ -120,9 +120,9 @@ void Ui::UpdateLEDs() {
       color = LED_COLOR_YELLOW;
     } else {
       // Idle (no loop): show CV target status
-      // Yellow = CV modulates Knob, Off = CV modulates Fader
+      // Brief yellow blink (every 0.8s) = CV modulates Knob, Off = CV modulates Fader
       if (cv_targets_[i] == 1) {
-        color = LED_COLOR_YELLOW;
+        color = ((now % 800) < 150) ? LED_COLOR_YELLOW : LED_COLOR_OFF;
       } else {
         color = LED_COLOR_OFF;
       }

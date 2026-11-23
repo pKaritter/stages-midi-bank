@@ -27,7 +27,7 @@ This firmware transforms one or two modules into a **24-channel MIDI controller*
     - **Unpatched / 0V:** Modulates the **Fader** (Slider LED pulses with the LFO).
     - **Sustained Gate (> 50ms):** Modulates the **Knob** while gate is HIGH; returns to the **Fader** when released (LOW).
     - **Trigger / Clock Pulse (< 50ms):** Each pulse **toggles** modulation between **Fader** and **Knob** and latches!
-    - **Visual Feedback:** When idle (no loop playing), the Button LED is OFF when targeting the Fader, and lights up Yellow/Amber when targeting the Knob!
+    - **Visual Feedback:** When idle (no loop playing), the Button LED is **OFF** when targeting the Fader, and gives a **slow yellow blink** when targeting the Knob (easily distinguishable from Solid Yellow Ping-Pong loops).
 - **24-Channel MIDI Output (Rear Jacks) with Always-On Streaming:**
   - Streams standard 7-bit MIDI Continuous Controller (CC) messages at standard 31,250 baud.
   - **Continuous Active Streaming:** In addition to immediate zero-latency updates for hand gestures, loops, and LFOs, a background refresh cycle continuously streams all channels so your synth is never out of sync, even if you switch presets or plug in after boot.
