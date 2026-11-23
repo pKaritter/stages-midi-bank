@@ -31,6 +31,7 @@ class MidiStreamer {
     memset(fader_throttle_, 0, sizeof(fader_throttle_));
     memset(knob_throttle_, 0, sizeof(knob_throttle_));
     rx_index_ = 0;
+    startup_ticks_ = 0;
 
 #if STAGES_ROLE == 1
     // MODULE 1 (Master / Synth Output):
@@ -88,6 +89,29 @@ class MidiStreamer {
     const uint8_t* knob_cc = kMod2KnobCC;
 #endif
 
+    // Startup position sync:
+    // 1. Wait ~0.4s (1500 ticks) for ADC filters to settle to real physical fader/knob positions.
+    // 2. Send full snapshot of all 12 controls at 0.5s, 2.0s, and 4.0s after power-on
+    //    so synths that boot slower than Stages still receive all current positions!
+    // 3. After 4s, only send on actual movement/loop/CV change (never resets stationary controls).
+    if (startup_ticks_ < 20000) {
+      ++startup_ticks_;
+      if (startup_ticks_ < 1500) {
+        FlushTxLeft();
+        return;
+      }
+#if STAGES_ROLE == 1
+      if (startup_ticks_ == 2000 || startup_ticks_ == 8000 || startup_ticks_ == 16000) {
+#else
+      if (startup_ticks_ == 2200 || startup_ticks_ == 8200 || startup_ticks_ == 16200) {
+#endif
+        memset(last_local_fader_, 0xff, sizeof(last_local_fader_));
+        memset(last_local_knob_, 0xff, sizeof(last_local_knob_));
+        memset(fader_throttle_, 0, sizeof(fader_throttle_));
+        memset(knob_throttle_, 0, sizeof(knob_throttle_));
+      }
+    }
+
     // Process local controls with rate limiting (~80 updates/sec at 4000Hz)
     for (size_t i = 0; i < 6; ++i) {
       if (local_fader_midi[i] != last_local_fader_[i]) {
@@ -133,6 +157,7 @@ class MidiStreamer {
   uint8_t knob_throttle_[6];
   uint8_t rx_msg_[3];
   uint8_t rx_index_;
+  uint32_t startup_ticks_;
 
   void QueueRaw3ByteLeft(uint8_t b0, uint8_t b1, uint8_t b2) {
     size_t head_l = tx_head_left_;
